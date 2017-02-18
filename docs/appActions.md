@@ -712,6 +712,16 @@ Dispatches a message when sync init data needs to be saved
 
 
 
+### applySiteRecords(records) 
+
+Dispatches a message to apply a batch of site records from Brave Sync
+
+**Parameters**
+
+**records**: `Array.&lt;Object&gt;`, Dispatches a message to apply a batch of site records from Brave Sync
+
+
+
 ### resetSyncData() 
 
 Dispatches a message to delete sync data.

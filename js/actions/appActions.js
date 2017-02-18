@@ -872,6 +872,17 @@ const appActions = {
   },
 
   /**
+   * Dispatches a message to apply a batch of site records from Brave Sync
+   * @param {Array.<Object>} records
+   */
+  applySiteRecords: function (records) {
+    AppDispatcher.dispatch({
+      actionType: appConstants.APP_APPLY_SITE_RECORDS,
+      records
+    })
+  },
+
+  /**
    * Dispatches a message to delete sync data.
    */
   resetSyncData: function () {
