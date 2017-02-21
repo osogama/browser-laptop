@@ -2,16 +2,27 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+'use strict'
+
+const async = require('async')
 const Serializer = require('./serializer')
 const messages = require('../constants/messages')
-const electron = require('electron')
-'use strict'
+let ipc
+
+if (typeof chrome !== 'undefined') { // eslint-disable-line
+  ipc = chrome.ipcRenderer // eslint-disable-line
+} else if (process.type === 'renderer') {
+  ipc = require('electron').ipcRenderer
+} else if (process.type === 'browser') {
+  ipc = require('electron').ipcMain
+}
 
 class AppDispatcher {
 
   constructor () {
     this.callbacks = []
     this.promises = []
+    this.dispatching = false
   }
 
   /**
@@ -24,7 +35,6 @@ class AppDispatcher {
    */
   register (callback) {
     if (process.type === 'renderer') {
-      const ipc = electron.ipcRenderer
       ipc.send('app-dispatcher-register')
     }
     this.callbacks.push(callback)
@@ -47,7 +57,14 @@ class AppDispatcher {
    * process will not run any callbacks for the renderer process that send messages.DISPATCH_ACTION
    * @param  {object} payload The data from the action.
    */
-  dispatch (payload) {
+  dispatch (payload, force = false) {
+    if (this.dispatching && !force) {
+      return dispatchCargo.push(payload)
+    }
+
+    dispatchCargo.pause()
+    this.dispatching = true
+
     if (payload.actionType === undefined) {
       throw new Error('Dispatcher: Undefined action for payload', payload)
     }
@@ -61,20 +78,18 @@ class AppDispatcher {
       })
     })
     // Dispatch to callbacks and resolve/reject promises.
-    this.callbacks.forEach(function (callback, i) {
-      // Callback can return an obj, to resolve, or a promise, to chain.
-      // See waitFor() for why this might be useful.
-      Promise.resolve(callback(payload)).then(function () {
-        resolves[i](payload)
-      }, function () {
-        rejects[i](new Error('Dispatcher callback unsuccessful'))
-      })
+    this.callbacks.forEach((callback, i) => {
+      callback(payload)
+      resolves[i](payload)
     })
+
+    dispatchCargo.resume()
+    this.dispatching = false
+
     this.promises = []
 
     if (process.type === 'renderer') {
-      const ipc = electron.ipcRenderer
-      ipc.send(messages.DISPATCH_ACTION, Serializer.serialize(payload))
+      ipcCargo.push(payload)
     }
   }
 
@@ -82,24 +97,44 @@ class AppDispatcher {
     var selectedPromises = promiseIndexes.map((index) => this.promises[index])
     return Promise.all(selectedPromises).then(callback)
   }
+
+  shutdown () {
+    appDispatcher.dispatch = (payload) => {}
+    dispatchCargo.kill()
+    ipcCargo.kill()
+  }
 }
 
 const appDispatcher = new AppDispatcher()
 
+const dispatchCargo = async.cargo((tasks, callback) => {
+  appDispatcher.dispatch(tasks[0], true)
+  callback()
+}, 1)
+
+const ipcCargo = async.cargo((tasks, callback) => {
+  ipc.send(messages.DISPATCH_ACTION, Serializer.serialize(tasks))
+  callback()
+}, 10)
+
 if (process.type === 'browser') {
-  const electron = require('electron')
-  const ipcMain = electron.ipcMain
-  ipcMain.on('app-dispatcher-register', (event) => {
+  ipc.on('app-dispatcher-register', (event) => {
     let registrant = event.sender
+    const registrantCargo = async.cargo((tasks, callback) => {
+      if (!registrant.isDestroyed()) {
+        registrant.send(messages.DISPATCH_ACTION, Serializer.serialize(tasks))
+      }
+      callback()
+    }, 10)
+
     const callback = function (payload) {
       try {
         if (registrant.isDestroyed()) {
           appDispatcher.unregister(callback)
         } else {
-          registrant.send(messages.DISPATCH_ACTION, Serializer.serialize(payload))
+          registrantCargo.push(payload)
         }
       } catch (e) {
-        console.error('unregistering callback', e)
         appDispatcher.unregister(callback)
       }
     }
@@ -112,9 +147,7 @@ if (process.type === 'browser') {
     appDispatcher.register(callback)
   })
 
-  ipcMain.on(messages.DISPATCH_ACTION, (event, payload) => {
-    payload = Serializer.deserialize(payload)
-
+  const dispatchEventPayload = (event, payload) => {
     let queryInfo = payload.queryInfo || payload.frameProps || (payload.queryInfo = {})
     queryInfo = queryInfo.toJS ? queryInfo.toJS() : queryInfo
     if (!event.sender.isDestroyed() && event.sender.hostWebContents) {
@@ -133,11 +166,15 @@ if (process.type === 'browser') {
       // add queryInfo if we only had frameProps before
       payload.queryInfo = queryInfo
       payload.senderTabId = event.sender.getId()
+    }
+    appDispatcher.dispatch(payload)
+  }
 
-      appDispatcher.dispatch(payload)
-    } else {
-      // received from a browser window
-      appDispatcher.dispatch(payload)
+  ipc.on(messages.DISPATCH_ACTION, (event, payload) => {
+    payload = Serializer.deserialize(payload)
+
+    for (var i = 0; i < payload.length; i++) {
+      dispatchEventPayload(event, payload[i])
     }
   })
 }
