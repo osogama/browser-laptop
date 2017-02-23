@@ -57,13 +57,17 @@ class AppDispatcher {
    * process will not run any callbacks for the renderer process that send messages.DISPATCH_ACTION
    * @param  {object} payload The data from the action.
    */
-  dispatch (payload, force = false) {
+  dispatch (payload) {
+    this.dispatchInternal(payload, false)
+  }
+
+  dispatchInternal (payload, force) {
     if (payload.actionType === undefined) {
       throw new Error('Dispatcher: Undefined action for payload', payload)
     }
 
     if (this.dispatching && !force) {
-      return dispatchQueue.push(payload, payload.dispatchPriority || 1)
+      return dispatchQueue.push(payload, payload.dispatchPriority || 3)
     }
 
     dispatchQueue.pause()
@@ -109,7 +113,7 @@ class AppDispatcher {
 const appDispatcher = new AppDispatcher()
 
 const dispatchQueue = async.priorityQueue((task, callback) => {
-  appDispatcher.dispatch(task, true)
+  appDispatcher.dispatchInternal(task, true)
   callback()
 }, 1)
 
