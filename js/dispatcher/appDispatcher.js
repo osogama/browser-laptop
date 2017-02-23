@@ -19,6 +19,10 @@ if (typeof chrome !== 'undefined') { // eslint-disable-line
 
 class AppDispatcher {
 
+  get defaultDispatchPriority () {
+    return 3
+  }
+
   constructor () {
     this.callbacks = []
     this.promises = []
@@ -58,19 +62,18 @@ class AppDispatcher {
    * @param  {object} payload The data from the action.
    */
   dispatch (payload) {
-    this.dispatchInternal(payload, false)
-  }
-
-  dispatchInternal (payload, force) {
     if (payload.actionType === undefined) {
       throw new Error('Dispatcher: Undefined action for payload', payload)
     }
 
-    if (this.dispatching && !force) {
-      return dispatchQueue.push(payload, payload.dispatchPriority || 3)
+    if (this.dispatching) {
+      return dispatchQueue.push(payload, payload.dispatchPriority || this.defaultDispatchPriority)
+    } else {
+      this.dispatchInternal(payload)
     }
+  }
 
-    dispatchQueue.pause()
+  dispatchInternal (payload) {
     this.dispatching = true
 
     // First create array of promises for callbacks to reference.
@@ -88,10 +91,11 @@ class AppDispatcher {
       resolves[i](payload)
     })
 
-    dispatchQueue.resume()
-    this.dispatching = false
-
     this.promises = []
+
+    if (dispatchQueue.idle()) {
+      this.dispatching = false
+    }
 
     if (process.type === 'renderer') {
       ipcCargo.push(payload)
@@ -105,15 +109,13 @@ class AppDispatcher {
 
   shutdown () {
     appDispatcher.dispatch = (payload) => {}
-    dispatchQueue.kill()
-    ipcCargo.kill()
   }
 }
 
 const appDispatcher = new AppDispatcher()
 
 const dispatchQueue = async.priorityQueue((task, callback) => {
-  appDispatcher.dispatchInternal(task, true)
+  appDispatcher.dispatchInternal(task)
   callback()
 }, 1)
 
@@ -172,6 +174,8 @@ if (process.type === 'browser') {
       payload.queryInfo = queryInfo
       payload.senderTabId = event.sender.getId()
     }
+    // set the default priority for incoming ipc payloads to be slightly lower than the default
+    payload.dispatchPriority = payload.dispatchPriority || (appDispatcher.defaultDispatchPriority + 1)
     appDispatcher.dispatch(payload)
   }
 
