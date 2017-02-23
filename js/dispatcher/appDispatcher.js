@@ -58,16 +58,17 @@ class AppDispatcher {
    * @param  {object} payload The data from the action.
    */
   dispatch (payload, force = false) {
-    if (this.dispatching && !force) {
-      return dispatchCargo.push(payload)
-    }
-
-    dispatchCargo.pause()
-    this.dispatching = true
-
     if (payload.actionType === undefined) {
       throw new Error('Dispatcher: Undefined action for payload', payload)
     }
+
+    if (this.dispatching && !force) {
+      return dispatchQueue.push(payload, payload.dispatchPriority || 1)
+    }
+
+    dispatchQueue.pause()
+    this.dispatching = true
+
     // First create array of promises for callbacks to reference.
     const resolves = []
     const rejects = []
@@ -83,7 +84,7 @@ class AppDispatcher {
       resolves[i](payload)
     })
 
-    dispatchCargo.resume()
+    dispatchQueue.resume()
     this.dispatching = false
 
     this.promises = []
@@ -100,15 +101,15 @@ class AppDispatcher {
 
   shutdown () {
     appDispatcher.dispatch = (payload) => {}
-    dispatchCargo.kill()
+    dispatchQueue.kill()
     ipcCargo.kill()
   }
 }
 
 const appDispatcher = new AppDispatcher()
 
-const dispatchCargo = async.cargo((tasks, callback) => {
-  appDispatcher.dispatch(tasks[0], true)
+const dispatchQueue = async.priorityQueue((task, callback) => {
+  appDispatcher.dispatch(task, true)
   callback()
 }, 1)
 
