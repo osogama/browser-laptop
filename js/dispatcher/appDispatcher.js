@@ -67,15 +67,14 @@ class AppDispatcher {
     }
 
     if (this.dispatching) {
-      return dispatchQueue.push(payload, payload.dispatchPriority || this.defaultDispatchPriority)
+      dispatchQueue.push(payload, payload.dispatchPriority || this.defaultDispatchPriority)
     } else {
+      this.dispatching = true
       this.dispatchInternal(payload)
     }
   }
 
   dispatchInternal (payload) {
-    this.dispatching = true
-
     // First create array of promises for callbacks to reference.
     const resolves = []
     const rejects = []
@@ -93,9 +92,7 @@ class AppDispatcher {
 
     this.promises = []
 
-    if (dispatchQueue.idle()) {
-      this.dispatching = false
-    }
+    doneDispatching()
 
     if (process.type === 'renderer') {
       ipcCargo.push(payload)
@@ -114,9 +111,16 @@ class AppDispatcher {
 
 const appDispatcher = new AppDispatcher()
 
+const doneDispatching = () => {
+  if (dispatchQueue.idle()) {
+    appDispatcher.dispatching = false
+  }
+}
+
 const dispatchQueue = async.priorityQueue((task, callback) => {
   appDispatcher.dispatchInternal(task)
   callback()
+  doneDispatching()
 }, 1)
 
 const ipcCargo = async.cargo((tasks, callback) => {
